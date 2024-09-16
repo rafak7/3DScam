@@ -4,6 +4,8 @@ import React, { useRef, useState, useEffect, useCallback } from 'react'
 import Webcam from 'react-webcam'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { Box } from '@react-three/drei'
+import * as tf from '@tensorflow/tfjs'
+import * as cocoSsd from '@tensorflow-models/coco-ssd'
 import * as THREE from 'three';
 
 function ScannedObject({ dimensions }: { dimensions: [number, number, number] }) {
@@ -28,6 +30,17 @@ export function ArScanner() {
   const [scanProgress, setScanProgress] = useState(0)
   const [isFrontCamera, setIsFrontCamera] = useState(true)
   const webcamRef = useRef<Webcam>(null)
+  const [model, setModel] = useState<cocoSsd.ObjectDetection | null>(null)
+  const [detectedObjects, setDetectedObjects] = useState<cocoSsd.DetectedObject[]>([])
+
+  useEffect(() => {
+    const loadModel = async () => {
+      await tf.ready()
+      const loadedModel = await cocoSsd.load()
+      setModel(loadedModel)
+    }
+    loadModel()
+  }, [])
 
   useEffect(() => {
     if (isScanning) {
@@ -51,17 +64,24 @@ export function ArScanner() {
     setIsFrontCamera((prev) => !prev)
   }, [])
 
-  const captureImage = useCallback(() => {
-    const imageSrc = webcamRef.current?.getScreenshot()
-    if (imageSrc) {
-      // Simples simulação de detecção de objetos
-      // Em um cenário real, você usaria uma biblioteca de visão computacional
-      setTimeout(() => {
-        setScannedObject([Math.random() * 0.5 + 0.1, Math.random() * 0.5 + 0.1, Math.random() * 0.5 + 0.1])
-        setIsScanning(false)
-      }, 2000)
+  const captureImage = useCallback(async () => {
+    if (webcamRef.current && model) {
+      const imageSrc = webcamRef.current.getScreenshot()
+      if (imageSrc) {
+        const img = new Image()
+        img.src = imageSrc
+        img.onload = async () => {
+          const predictions = await model.detect(img)
+          setDetectedObjects(predictions)
+          setIsScanning(false)
+          if (predictions.length > 0) {
+            const [, , width, height] = predictions[0].bbox
+            setScannedObject([width / 100, height / 100, 0.1]) // Adjust scale as needed
+          }
+        }
+      }
     }
-  }, [])
+  }, [model])
 
   const handleScan = () => {
     if (!scannedObject) {
@@ -85,6 +105,13 @@ export function ArScanner() {
           <pointLight position={[10, 10, 10]} />
           <ScannedObject dimensions={scannedObject} />
         </Canvas>
+      )}
+      {detectedObjects.length > 0 && (
+        <div className="absolute top-4 left-4 bg-white p-2 rounded">
+          {detectedObjects.map((obj, index) => (
+            <p key={index}>{`${obj.class} (${Math.round(obj.score * 100)}%)`}</p>
+          ))}
+        </div>
       )}
       {isScanning && (
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white p-4 rounded">
